@@ -103,10 +103,12 @@ export async function POST(request: NextRequest) {
     }
 
     // Cluster faces into persons
-    const clusters = clusterFaces(
-      allFaces.map(f => f.embedding),
-      FACE_MATCH_THRESHOLD
-    )
+    const clusterInput = allFaces.map((f, idx) => ({
+      faceId: `face_${idx}`,
+      photoId: f.photoId,
+      embedding: f.embedding,
+    }))
+    const clusters = clusterFaces(clusterInput, FACE_MATCH_THRESHOLD)
 
     console.log(`[FaceProcess] Created ${clusters.length} person clusters`)
 
@@ -119,7 +121,7 @@ export async function POST(request: NextRequest) {
         .from('detected_persons')
         .insert({
           event_id: eventId,
-          photo_count: cluster.length,
+          photo_count: cluster.faceIds.length,
         })
         .select()
         .single()
@@ -130,7 +132,9 @@ export async function POST(request: NextRequest) {
       }
 
       // Create face records for this cluster
-      for (const faceIndex of cluster) {
+      for (const faceId of cluster.faceIds) {
+        // Extract index from faceId (format: face_0, face_1, etc)
+        const faceIndex = parseInt(faceId.split('_')[1])
         const face = allFaces[faceIndex]
         
         await supabase

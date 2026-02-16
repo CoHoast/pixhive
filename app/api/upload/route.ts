@@ -1,13 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createAdminClient } from '@/lib/supabase/server'
-import { uploadFile, generatePhotoKey, generateThumbnailKey } from '@/lib/storage'
-import sharp from 'sharp'
 
 export const runtime = 'nodejs'
-export const maxDuration = 60 // 60 second timeout for uploads
+export const dynamic = 'force-dynamic'
+export const maxDuration = 60
 
 export async function POST(request: NextRequest) {
   try {
+    // Dynamic imports to avoid build-time errors
+    const { createClient } = await import('@supabase/supabase-js')
+    const { uploadFile, generatePhotoKey, generateThumbnailKey } = await import('@/lib/storage')
+    const sharp = (await import('sharp')).default
+
     const formData = await request.formData()
     const eventId = formData.get('eventId') as string
     const guestId = formData.get('guestId') as string | null
@@ -22,7 +25,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'No files provided' }, { status: 400 })
     }
 
-    const supabase = await createAdminClient()
+    // Create admin client
+    const supabase = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+    )
 
     // Verify event exists and is active
     const { data: eventData, error: eventError } = await supabase
@@ -121,16 +128,6 @@ export async function POST(request: NextRequest) {
         // Update guest photo count
         if (guestId) {
           await (supabase as any).rpc('increment_guest_photo_count', { guest_id: guestId })
-        }
-
-        // Queue face detection (fire and forget)
-        // In production, use a proper job queue (BullMQ/Upstash)
-        if (process.env.REPLICATE_API_TOKEN) {
-          fetch(`${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/faces/process`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ photoId: photoData.id }),
-          }).catch(err => console.error('Failed to queue face processing:', err))
         }
 
       } catch (err) {

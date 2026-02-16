@@ -1,9 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
-import JSZip from 'jszip'
 
 export const runtime = 'nodejs'
-export const maxDuration = 300 // 5 minute timeout for large downloads
+export const dynamic = 'force-dynamic'
+export const maxDuration = 300
 
 export async function GET(
   request: NextRequest,
@@ -12,7 +11,33 @@ export async function GET(
   const { eventId } = await params
   
   try {
-    const supabase = await createClient()
+    // Dynamic imports to avoid build-time errors
+    const { createServerClient } = await import('@supabase/ssr')
+    const { cookies } = await import('next/headers')
+    const JSZip = (await import('jszip')).default
+
+    const cookieStore = await cookies()
+
+    const supabase = createServerClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      {
+        cookies: {
+          getAll() {
+            return cookieStore.getAll()
+          },
+          setAll(cookiesToSet) {
+            try {
+              cookiesToSet.forEach(({ name, value, options }) =>
+                cookieStore.set(name, value, options)
+              )
+            } catch {
+              // Ignore
+            }
+          },
+        },
+      }
+    )
 
     // Verify user owns this event
     const { data: { user } } = await supabase.auth.getUser()

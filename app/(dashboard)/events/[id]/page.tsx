@@ -4,6 +4,8 @@ import Link from 'next/link'
 import { getEvent } from '@/lib/actions/events'
 import { getEventPhotos } from '@/lib/actions/photos'
 import { getEventGuests } from '@/lib/actions/guests'
+
+export const dynamic = 'force-dynamic'
 import QRCodeDisplay from '@/components/events/QRCodeDisplay'
 import PhotoGallery from '@/components/events/PhotoGallery'
 import EventStats from '@/components/events/EventStats'

@@ -2,6 +2,8 @@ import { Suspense } from 'react'
 import Link from 'next/link'
 import { getMyEvents } from '@/lib/actions/events'
 import { createClient } from '@/lib/supabase/server'
+
+export const dynamic = 'force-dynamic'
 import { formatDistanceToNow } from 'date-fns'
 import { 
   Plus, 

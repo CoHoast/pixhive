@@ -2,6 +2,8 @@ import { createClient } from '@/lib/supabase/server'
 import Link from 'next/link'
 import type { Profile } from '@/lib/types/database'
 
+export const dynamic = 'force-dynamic'
+
 const PLAN_LIMITS = {
   free: { photos: 50, duration_days: 2, ai_features: false },
   starter: { photos: 500, duration_days: 90, ai_features: false },

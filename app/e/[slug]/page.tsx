@@ -4,6 +4,8 @@ import { getEventBySlug } from '@/lib/actions/events'
 import { getCurrentGuest } from '@/lib/actions/guests'
 import GuestUploadFlow from './GuestUploadFlow'
 
+export const dynamic = 'force-dynamic'
+
 interface PageProps {
   params: Promise<{ slug: string }>
 }

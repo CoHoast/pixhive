@@ -1,21 +1,37 @@
-// @ts-nocheck
 import { NextRequest, NextResponse } from 'next/server'
-import { createAdminClient } from '@/lib/supabase/server'
-import { extractSelfieEmbedding, FACE_MATCH_THRESHOLD } from '@/lib/ai/faces'
-import { uploadFile, generatePhotoKey } from '@/lib/storage'
 
 export const runtime = 'nodejs'
-export const maxDuration = 30
+export const dynamic = 'force-dynamic'
 
 /**
  * POST /api/faces/search
  * Search for photos containing a specific face
  * 
- * Body: FormData with 'selfie' image file and 'eventId'
- * Returns: Array of matching photos with similarity scores
+ * Requires REPLICATE_API_TOKEN and SUPABASE_SERVICE_ROLE_KEY
+ * Returns error if not configured (face detection is optional add-on)
  */
 export async function POST(request: NextRequest) {
+  // Check if face detection is configured
+  if (!process.env.REPLICATE_API_TOKEN) {
+    return NextResponse.json(
+      { error: 'Face detection is not enabled. Contact support to add this feature.' },
+      { status: 503 }
+    )
+  }
+
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    return NextResponse.json(
+      { error: 'Service not configured' },
+      { status: 503 }
+    )
+  }
+
   try {
+    // Dynamic imports to avoid build-time errors
+    const { createClient } = await import('@supabase/supabase-js')
+    const { extractSelfieEmbedding, FACE_MATCH_THRESHOLD } = await import('@/lib/ai/faces')
+    const { uploadFile } = await import('@/lib/storage')
+
     const formData = await request.formData()
     const selfie = formData.get('selfie') as File
     const eventId = formData.get('eventId') as string
@@ -42,8 +58,11 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Search for matching faces in database
-    const supabase = await createAdminClient()
+    // Create admin client for database operations
+    const supabase = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!
+    )
 
     // Use pgvector similarity search
     const { data: matches, error } = await supabase.rpc('search_similar_faces', {
@@ -86,9 +105,6 @@ export async function POST(request: NextRequest) {
       }
     }).sort((a, b) => b.similarity - a.similarity) || []
 
-    // Clean up temp selfie (fire and forget)
-    // In production, use a scheduled cleanup job
-    
     return NextResponse.json({
       results,
       count: results.length,

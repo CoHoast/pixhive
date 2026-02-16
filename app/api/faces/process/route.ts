@@ -1,62 +1,168 @@
-// @ts-nocheck
 import { NextRequest, NextResponse } from 'next/server'
-import { processPhotoFaces } from '@/lib/actions/faces'
 
 export const runtime = 'nodejs'
-export const maxDuration = 60
+export const dynamic = 'force-dynamic'
+export const maxDuration = 300
 
 /**
  * POST /api/faces/process
- * Process a photo for face detection
- * Called by background job or webhook after upload
+ * Process all photos in an event for face detection
  * 
- * Body: { photoId: string }
- * Returns: { facesDetected: number } or { error: string }
+ * Requires REPLICATE_API_TOKEN and SUPABASE_SERVICE_ROLE_KEY
+ * This is an admin/background operation
  */
 export async function POST(request: NextRequest) {
-  try {
-    // Verify internal request (should come from our own services)
-    const authHeader = request.headers.get('authorization')
-    const internalKey = process.env.INTERNAL_API_KEY
+  // Check if face detection is configured
+  if (!process.env.REPLICATE_API_TOKEN) {
+    return NextResponse.json(
+      { error: 'Face detection is not enabled. Add REPLICATE_API_TOKEN to enable.' },
+      { status: 503 }
+    )
+  }
 
-    // In production, validate the internal key
-    // For now, allow all requests in development
-    if (internalKey && authHeader !== `Bearer ${internalKey}`) {
-      // Skip auth check in development
-      if (process.env.NODE_ENV === 'production') {
-        return NextResponse.json(
-          { error: 'Unauthorized' },
-          { status: 401 }
-        )
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    return NextResponse.json(
+      { error: 'Service not configured' },
+      { status: 503 }
+    )
+  }
+
+  try {
+    // Dynamic imports to avoid build-time errors
+    const { createClient } = await import('@supabase/supabase-js')
+    const { detectFaces, cosineSimilarity, FACE_MATCH_THRESHOLD } = await import('@/lib/ai/faces')
+    const { clusterFaces } = await import('@/lib/ai/clustering')
+
+    const { eventId } = await request.json()
+
+    if (!eventId) {
+      return NextResponse.json(
+        { error: 'Missing eventId' },
+        { status: 400 }
+      )
+    }
+
+    // Create admin client
+    const supabase = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!
+    )
+
+    // Get all photos for event
+    const { data: photos, error: photosError } = await supabase
+      .from('photos')
+      .select('id, file_url')
+      .eq('event_id', eventId)
+      .is('moderation_status', 'approved')
+
+    if (photosError) {
+      throw photosError
+    }
+
+    if (!photos || photos.length === 0) {
+      return NextResponse.json({ message: 'No photos to process' })
+    }
+
+    console.log(`[FaceProcess] Processing ${photos.length} photos for event ${eventId}`)
+
+    // Process each photo for face detection
+    const allFaces: Array<{
+      photoId: string
+      embedding: number[]
+      bbox: any
+      confidence: number
+    }> = []
+
+    for (const photo of photos) {
+      try {
+        const faces = await detectFaces(photo.file_url)
+        
+        for (const face of faces) {
+          if (face.embedding && face.embedding.length > 0) {
+            allFaces.push({
+              photoId: photo.id,
+              embedding: face.embedding,
+              bbox: face.bbox,
+              confidence: face.confidence,
+            })
+          }
+        }
+      } catch (error) {
+        console.error(`[FaceProcess] Error processing photo ${photo.id}:`, error)
       }
     }
 
-    const body = await request.json()
-    const { photoId } = body
+    console.log(`[FaceProcess] Detected ${allFaces.length} faces`)
 
-    if (!photoId) {
-      return NextResponse.json(
-        { error: 'Missing photoId' },
-        { status: 400 }
-      )
+    if (allFaces.length === 0) {
+      return NextResponse.json({ 
+        message: 'No faces detected',
+        photosProcessed: photos.length,
+        facesDetected: 0,
+      })
     }
 
-    const result = await processPhotoFaces(photoId)
+    // Cluster faces into persons
+    const clusters = clusterFaces(
+      allFaces.map(f => f.embedding),
+      FACE_MATCH_THRESHOLD
+    )
 
-    if (result.error) {
-      return NextResponse.json(
-        { error: result.error },
-        { status: 400 }
-      )
+    console.log(`[FaceProcess] Created ${clusters.length} person clusters`)
+
+    // Create person records and face records
+    for (let i = 0; i < clusters.length; i++) {
+      const cluster = clusters[i]
+      
+      // Create person record
+      const { data: person, error: personError } = await supabase
+        .from('detected_persons')
+        .insert({
+          event_id: eventId,
+          photo_count: cluster.length,
+        })
+        .select()
+        .single()
+
+      if (personError) {
+        console.error('[FaceProcess] Error creating person:', personError)
+        continue
+      }
+
+      // Create face records for this cluster
+      for (const faceIndex of cluster) {
+        const face = allFaces[faceIndex]
+        
+        await supabase
+          .from('detected_faces')
+          .insert({
+            photo_id: face.photoId,
+            person_id: person.id,
+            embedding: `[${face.embedding.join(',')}]`,
+            bounding_box: face.bbox,
+            confidence: face.confidence,
+          })
+      }
     }
+
+    // Update event AI status
+    await supabase
+      .from('events')
+      .update({ 
+        ai_processing_status: 'completed',
+        ai_features: { core: false, face_detection: true }
+      })
+      .eq('id', eventId)
 
     return NextResponse.json({
       success: true,
-      facesDetected: result.facesDetected,
+      photosProcessed: photos.length,
+      facesDetected: allFaces.length,
+      personsCreated: clusters.length,
     })
 
   } catch (error) {
-    console.error('Face processing error:', error)
+    console.error('Face process error:', error)
     return NextResponse.json(
       { error: 'Processing failed' },
       { status: 500 }

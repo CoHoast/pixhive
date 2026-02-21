@@ -6,6 +6,12 @@ import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 import type { Event, EventInsert, EventUpdate } from '@/lib/types/database'
 
+// Check if we're in build mode (no real Supabase connection)
+function isBuildTime(): boolean {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL
+  return !url || url.includes('placeholder') || url === ''
+}
+
 /**
  * Create a new event
  */
@@ -185,6 +191,11 @@ export async function getMyEvents(): Promise<{ events: Event[]; error: string | 
  * Get single event by ID (for owner)
  */
 export async function getEvent(eventId: string): Promise<{ event: Event | null; error: string | null }> {
+  // Skip during build time
+  if (isBuildTime()) {
+    return { event: null, error: 'Build time - skipping' }
+  }
+
   const supabase = await createClient()
   
   const { data: { user } } = await supabase.auth.getUser()

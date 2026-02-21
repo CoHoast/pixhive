@@ -2,10 +2,13 @@
 nixPkgs = ["nodejs_20"]
 
 [phases.install]
-cmds = ["rm -rf node_modules/.cache", "npm ci --prefer-offline"]
+cmds = ["npm ci --cache /tmp/.npm"]
 
 [phases.build]
 cmds = ["npm run build"]
 
 [start]
 cmd = "npm start"
+
+[options]
+staticAssets = false

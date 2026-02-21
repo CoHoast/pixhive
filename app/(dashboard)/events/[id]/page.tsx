@@ -17,15 +17,19 @@ interface PageProps {
 }
 
 export async function generateMetadata({ params }: PageProps) {
-  const { id } = await params
-  const { event } = await getEvent(id)
-  
-  if (!event) {
-    return { title: 'Event Not Found — PixHive' }
-  }
+  try {
+    const { id } = await params
+    const { event } = await getEvent(id)
+    
+    if (!event) {
+      return { title: 'Event Not Found — PixHive' }
+    }
 
-  return {
-    title: `${event.name} — PixHive`,
+    return {
+      title: `${event.name} — PixHive`,
+    }
+  } catch {
+    return { title: 'Event — PixHive' }
   }
 }
 
